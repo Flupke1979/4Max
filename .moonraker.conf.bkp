@@ -31,9 +31,10 @@ trusted_clients =
 [update_manager]
 enable_auto_refresh = True
 
-[update_manager client fluidd]
+[update_manager fluidd]
 type = web
-repo = cadriel/fluidd
+channel = stable
+repo = fluidd-core/fluidd
 path = ~/fluidd
 
 [update_manager client KlipperScreen]
@@ -43,25 +44,4 @@ origin = https://github.com/jordanruthe/KlipperScreen.git
 env = ~/.KlipperScreen-env/bin/python
 requirements = scripts/KlipperScreen-requirements.txt
 install_script = scripts/KlipperScreen-install.sh
-
-[power homeassistant_status]
-type = homeassistant
-address = 192.168.0.30
-port = 8123
-device = switch.4max_status
-token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJmYjJiZjQ4MDFhY2M0NzMwYTViZTA4MTQ0MjgxM2E0ZSIsImlhdCI6MTYzODI5ODc2MywiZXhwIjoxOTUzNjU4NzYzfQ.LFsKrkc18Uar0NHwqAJSnOnAvVK6b3u7StkW4PsLTmY
-domain = switch
-
-[mqtt]
-address = 192.168.0.30
-port = 1883
-username = Flupke
-password = Kim58811
-mqtt_protocol = v3.1.1
-enable_moonraker_api = True
-instance_name = 4Max
-status_objects = 
-	print_stats=state,message
-default_qos = 0
-api_qos = 0
 
