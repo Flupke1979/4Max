@@ -5,92 +5,135 @@
 (*
   FB_PompDrukPID
   ==============
-  PI(D) regelaar voor pompdruk regeling in TwinCAT 3.
+  PI(D) regelaar voor pompdrukregeling in TwinCAT 3.
 
   Regelstrategie:
-    - P : Proportioneel — direct reactie op afwijking
+    - P : Proportioneel — directe reactie op afwijking
     - I : Integraal     — elimineert blijvende afwijking (steady-state error)
     - D : Differentieel — standaard UIT (Td = 0).
           D versterkt sensorruis en is voor pompdruk niet aanbevolen.
-          Alleen inschakelen bij zeer trage systemen met stabiel druksignaal.
+
+  Blip-vrij (bumpless transfer):
+    Bij inschakelen en bij reset wordt het integraal voorgeladen zodat de
+    uitgang vloeiend start op rUitMin zonder schok.
+
+  Setpoint ramp:
+    rSpRamp [bar/s] begrenst hoe snel het interne setpoint mag wijzigen.
+    Voorkomt P-piek bij grote setpointsprongen. 0.0 = ramp uitgeschakeld.
 
   Anti-windup:
     Integraal stopt met opladen wanneer de uitgang gesatureerd is
     in dezelfde richting als de afwijking.
 
   Parameters:
-    bEnable      : PID actief. Bij FALSE: uitgang = rUitMin, integraal gereset.
-    rSetpoint    : Gewenste druk [bar]
-    rMeting      : Gemeten druk van sensor [bar]
-    rKp          : Proportionele versterking [-]
-    rTi          : Integratietijd [s]  — 0.0 = integraal uitgeschakeld
-    rTd          : Differentiatietijd [s] — 0.0 = differentiaal uitgeschakeld (aanbevolen)
-    rUitMin      : Minimale pompuitgang [%]  (bv. 10.0 voor minimumtoerental)
-    rUitMax      : Maximale pompuitgang [%]  (bv. 100.0)
-    rCyclustijd  : PLC taskperiode [s]  (bv. 0.01 voor 10ms task)
-    bReset       : Stijgende flank reset integraal naar 0
+    bEnable       : PID actief. Bij FALSE: uitgang = rUitMin, bumpless tracking.
+    rSetpoint     : Gewenste druk [bar]
+    rMeting       : Gemeten druk van sensor [bar]
+    rKp           : Proportionele versterking [-]
+    rTi           : Integratietijd [s]  — 0.0 = integraal uitgeschakeld
+    rTd           : Differentiatietijd [s] — 0.0 = differentiaal uitgeschakeld (aanbevolen)
+    rSpRamp       : Max setpointwijziging [bar/s] — 0.0 = ramp uitgeschakeld
+    rUitMin       : Minimale pompuitgang [%]
+    rUitMax       : Maximale pompuitgang [%]
+    rCyclustijd   : PLC taskperiode [s]  (bv. 0.01 voor 10ms task)
+    bReset        : Stijgende flank: bumpless reset naar rUitMin
 *)
 FUNCTION_BLOCK FB_PompDrukPID
 VAR_INPUT
-    bEnable      : BOOL;                 // PID inschakelen
-    rSetpoint    : REAL;                 // Gewenste druk [bar]
-    rMeting      : REAL;                 // Gemeten druk [bar]
-    rKp          : REAL := 5.0;          // Proportionele versterking [-]
-    rTi          : REAL := 2.0;          // Integratietijd [s]  (0 = I uit)
-    rTd          : REAL := 0.0;          // Differentiatietijd [s] (0 = D uit, aanbevolen)
-    rUitMin      : REAL := 0.0;          // Minimum pompuitgang [%]
-    rUitMax      : REAL := 100.0;        // Maximum pompuitgang [%]
-    rCyclustijd  : REAL := 0.01;         // Taskperiode [s]
-    bReset       : BOOL;                 // Reset integraal
+    bEnable       : BOOL;                 // PID inschakelen
+    rSetpoint     : REAL;                 // Gewenste druk [bar]
+    rMeting       : REAL;                 // Gemeten druk [bar]
+    rKp           : REAL := 5.0;          // Proportionele versterking [-]
+    rTi           : REAL := 2.0;          // Integratietijd [s]  (0 = I uit)
+    rTd           : REAL := 0.0;          // Differentiatietijd [s] (0 = D uit, aanbevolen)
+    rSpRamp       : REAL := 0.0;          // Max setpointwijziging [bar/s] (0 = uit)
+    rUitMin       : REAL := 0.0;          // Minimum pompuitgang [%]
+    rUitMax       : REAL := 100.0;        // Maximum pompuitgang [%]
+    rCyclustijd   : REAL := 0.01;         // Taskperiode [s]
+    bReset        : BOOL;                 // Bumpless reset naar rUitMin
 END_VAR
 VAR_OUTPUT
-    rUitgang     : REAL;                 // Pompuitgang [%]
-    rAfwijking   : REAL;                 // Regelafwijking: setpoint - meting [bar]
-    rPDeel       : REAL;                 // P-bijdrage [%]
-    rIDeel       : REAL;                 // I-bijdrage [%]
-    rDDeel       : REAL;                 // D-bijdrage [%]
-    bMinBegrensd : BOOL;                 // Uitgang gesatureerd op minimum
-    bMaxBegrensd : BOOL;                 // Uitgang gesatureerd op maximum
+    rUitgang      : REAL;                 // Pompuitgang [%]
+    rSetpointActief : REAL;               // Intern (gerampte) setpoint [bar]
+    rAfwijking    : REAL;                 // Regelafwijking: setpoint - meting [bar]
+    rPDeel        : REAL;                 // P-bijdrage [%]
+    rIDeel        : REAL;                 // I-bijdrage [%]
+    rDDeel        : REAL;                 // D-bijdrage [%]
+    bMinBegrensd  : BOOL;                 // Uitgang gesatureerd op minimum
+    bMaxBegrensd  : BOOL;                 // Uitgang gesatureerd op maximum
 END_VAR
 VAR
-    rIntegraal   : REAL;                 // Integraalsom
-    rAfwijkingVorig : REAL;              // Afwijking vorige cyclus (voor D)
+    rIntegraal    : REAL;                 // Integraalsom
+    rMetingVorig  : REAL;                // Meting vorige cyclus (voor D op meting)
     rUitOngeclipped : REAL;              // PID som voor begrenzing
-    bResetVorig  : BOOL;                 // Flankdetectie reset
+    bResetVorig   : BOOL;                // Flankdetectie reset
+    rSpIntern     : REAL;                // Gerampte setpoint intern
+    bEersteRun    : BOOL := TRUE;        // Initialisatie eerste scan
 END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[
-// --- Reset op stijgende flank ---
-IF bReset AND NOT bResetVorig THEN
-    rIntegraal      := 0.0;
-    rAfwijkingVorig := 0.0;
-END_IF
-bResetVorig := bReset;
-
-// --- PID inactief: uitgang op minimum, integraal wissen ---
-IF NOT bEnable THEN
-    rUitgang        := rUitMin;
-    rIntegraal      := 0.0;
-    rAfwijkingVorig := 0.0;
-    rAfwijking      := 0.0;
-    rPDeel          := 0.0;
-    rIDeel          := 0.0;
-    rDDeel          := 0.0;
-    bMinBegrensd    := FALSE;
-    bMaxBegrensd    := FALSE;
-    RETURN;
+// --- Initialisatie eerste scan ---
+IF bEersteRun THEN
+    rSpIntern    := rSetpoint;
+    rMetingVorig := rMeting;
+    bEersteRun   := FALSE;
 END_IF
 
 // --- Veiligheidscontrole parameters ---
 IF rCyclustijd <= 0.0 THEN rCyclustijd := 0.01; END_IF
 IF rUitMax <= rUitMin  THEN rUitMax    := rUitMin + 1.0; END_IF
 
-// --- Regelafwijking ---
-rAfwijking := rSetpoint - rMeting;
+// --- Setpoint ramp (begrenst sprongen op setpoint) ---
+IF rSpRamp > 0.0 THEN
+    IF rSetpoint > rSpIntern + rSpRamp * rCyclustijd THEN
+        rSpIntern := rSpIntern + rSpRamp * rCyclustijd;
+    ELSIF rSetpoint < rSpIntern - rSpRamp * rCyclustijd THEN
+        rSpIntern := rSpIntern - rSpRamp * rCyclustijd;
+    ELSE
+        rSpIntern := rSetpoint;
+    END_IF
+ELSE
+    rSpIntern := rSetpoint;
+END_IF
+rSetpointActief := rSpIntern;
 
-// --- P-deel ---
-rPDeel := rKp * rAfwijking;
+// --- Regelafwijking (ook berekend als PID uit, voor bumpless tracking) ---
+rAfwijking := rSpIntern - rMeting;
+rPDeel     := rKp * rAfwijking;
+
+// --- Bumpless reset op stijgende flank ---
+IF bReset AND NOT bResetVorig THEN
+    IF rTi > 0.0 AND rKp > 0.0 THEN
+        // Laad integraal zo dat P + I = 0.0 (uitgang wordt 0 na reset)
+        rIntegraal := (0.0 - rPDeel) * rTi / rKp;
+    ELSE
+        rIntegraal := 0.0;
+    END_IF
+    rMetingVorig := rMeting;
+END_IF
+bResetVorig := bReset;
+
+// --- PID inactief: uitgang = 0, integraal tracken voor bumpless inschakelen ---
+IF NOT bEnable THEN
+    rSpIntern       := rSetpoint;       // Geen ramp-achterstand bij inschakelen
+    rSetpointActief := rSpIntern;
+
+    // Pre-laad integraal zodat bij inschakelen uitgang start op 0.0 (blip-vrij)
+    IF rTi > 0.0 AND rKp > 0.0 THEN
+        rIntegraal := (0.0 - rPDeel) * rTi / rKp;
+    ELSE
+        rIntegraal := 0.0;
+    END_IF
+    rMetingVorig := rMeting;
+
+    rUitgang      := 0.0;
+    rIDeel        := 0.0;
+    rDDeel        := 0.0;
+    bMinBegrensd  := FALSE;
+    bMaxBegrensd  := FALSE;
+    RETURN;
+END_IF
 
 // --- I-deel met anti-windup ---
 IF rTi > 0.0 THEN
@@ -105,23 +148,26 @@ ELSE
     rIDeel     := 0.0;
 END_IF
 
-// --- D-deel (standaard Td=0, dus uitgeschakeld) ---
+// --- D-deel op meting (vermijdt D-kick bij setpointwijziging) ---
+// Derivaat op -meting i.p.v. fout: setpointsprong geeft geen D-piek
 IF rTd > 0.0 THEN
-    rDDeel := rKp * rTd * (rAfwijking - rAfwijkingVorig) / rCyclustijd;
+    rDDeel := -rKp * rTd * (rMeting - rMetingVorig) / rCyclustijd;
 ELSE
     rDDeel := 0.0;
 END_IF
-rAfwijkingVorig := rAfwijking;
+rMetingVorig := rMeting;
 
 // --- PID som ---
 rUitOngeclipped := rPDeel + rIDeel + rDDeel;
 
 // --- Uitgang begrenzen ---
+// Onder minimum: pomp volledig uit (0.0), niet vastgehouden op minimum
+// Boven maximum: begrensd op maximum
 bMinBegrensd := rUitOngeclipped < rUitMin;
 bMaxBegrensd := rUitOngeclipped > rUitMax;
 
 IF bMinBegrensd THEN
-    rUitgang := rUitMin;
+    rUitgang := 0.0;
 ELSIF bMaxBegrensd THEN
     rUitgang := rUitMax;
 ELSE

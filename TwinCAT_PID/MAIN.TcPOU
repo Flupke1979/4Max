@@ -10,11 +10,18 @@
     - Druksensor  : analoge ingang  (bv. 4-20mA of 0-10V -> geschaald naar bar)
     - Pompuitgang : analoge uitgang (0-100% -> bv. 0-10V naar frequentieregelaar)
 
+  Uitgang minimum gedrag:
+    - PID uitgang < rPompMin  => uitgang = 0.0  (pomp volledig UIT)
+    - PID uitgang >= rPompMin => uitgang = berekende waarde (min. rPompMin)
+    - PID uitgang > rPompMax  => uitgang = rPompMax
+    Dit voorkomt dat de pomp op minimum blijft draaien als de druk al hoog genoeg is.
+
   Afstellen (aanbevolen volgorde):
     1. Start met Kp = 1.0, Ti = 0 (I uit), Td = 0
     2. Verhoog Kp tot lichte oscillatie, halveer dan Kp
     3. Voeg integratietijd Ti toe (begin bij 5-10s, verlaag tot gewenste nauwkeurigheid)
-    4. D is voor pompdruk normaal NIET nodig — laat Td = 0.0
+    4. Stel rSpRamp in als setpointsprongen een P-piek geven (bv. 0.5 bar/s)
+    5. D is voor pompdruk normaal NIET nodig — laat Td = 0.0
 *)
 PROGRAM MAIN
 VAR
@@ -28,17 +35,18 @@ VAR
     rKp             : REAL := 5.0;   // Proportionele versterking
     rTi             : REAL := 2.0;   // Integratietijd [s]  (0 = I uit)
     rTd             : REAL := 0.0;   // Differentiatietijd [s] (0 = D uit — aanbevolen)
+    rSpRamp         : REAL := 0.5;   // Max setpointwijziging [bar/s] (0 = ramp uit)
 
     // --- Uitgang begrenzing ---
-    rPompMin        : REAL := 10.0;  // Minimum pompuitgang [%]  (0 = volledig uitzetten)
+    rPompMin        : REAL := 20.0;  // Minimum loopsnelheid pomp [%]  (bij PID < min => 0%)
     rPompMax        : REAL := 100.0; // Maximum pompuitgang [%]
 
     // --- Bediening ---
     bPIDActief      : BOOL := FALSE; // PID starten/stoppen
-    bReset          : BOOL;          // Integraal resetten
+    bReset          : BOOL;          // Bumpless reset naar 0
 
     // --- Uitgang naar aandrijving ---
-    rPompUitgang    : REAL;          // 0.0 .. 100.0 [%]
+    rPompUitgang    : REAL;          // 0.0 of rPompMin..rPompMax [%]
 END_VAR
 ]]></Declaration>
     <Implementation>
@@ -60,6 +68,7 @@ fbPompPID(
     rKp          := rKp,
     rTi          := rTi,
     rTd          := rTd,
+    rSpRamp      := rSpRamp,
     rUitMin      := rPompMin,
     rUitMax      := rPompMax,
     rCyclustijd  := 0.01,            // Pas aan op uw task-periode (hier 10ms)
@@ -67,6 +76,7 @@ fbPompPID(
 );
 
 // Uitgang overnemen
+// fbPompPID.rUitgang = 0.0 als PID < rPompMin, anders rPompMin..rPompMax
 rPompUitgang := fbPompPID.rUitgang;
 
 // ---------------------------------------------------------------
