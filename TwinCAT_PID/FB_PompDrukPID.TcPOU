@@ -15,28 +15,36 @@
 
   Blip-vrij (bumpless transfer):
     Bij inschakelen en bij reset wordt het integraal voorgeladen zodat de
-    uitgang vloeiend start op rUitMin zonder schok.
+    uitgang vloeiend start op 0 zonder schok.
 
   Setpoint ramp:
     rSpRamp [bar/s] begrenst hoe snel het interne setpoint mag wijzigen.
     Voorkomt P-piek bij grote setpointsprongen. 0.0 = ramp uitgeschakeld.
 
+  Hysterese op aan/uit schakeldrempel (anti-puls):
+    Pomp gaat UIT als PID-uitgang < rUitMin.
+    Pomp gaat AAN pas als PID-uitgang >= rUitMin + rHysterese.
+    Voorkomt pulsen/klapperen bij overshoot terugkeer naar setpoint.
+    Anti-windup respecteert de hysterese: integraal stopt ook tijdens
+    de hysteresezone zodat de drempel niet herhaaldelijk geraakt wordt.
+
   Anti-windup:
-    Integraal stopt met opladen wanneer de uitgang gesatureerd is
-    in dezelfde richting als de afwijking.
+    Integraal stopt met opladen wanneer de pomp gesatureerd is
+    (uitgang = 0 of uitgang = rUitMax) in dezelfde richting als de afwijking.
 
   Parameters:
-    bEnable       : PID actief. Bij FALSE: uitgang = rUitMin, bumpless tracking.
+    bEnable       : PID actief. Bij FALSE: uitgang = 0, bumpless tracking.
     rSetpoint     : Gewenste druk [bar]
     rMeting       : Gemeten druk van sensor [bar]
     rKp           : Proportionele versterking [-]
     rTi           : Integratietijd [s]  — 0.0 = integraal uitgeschakeld
     rTd           : Differentiatietijd [s] — 0.0 = differentiaal uitgeschakeld (aanbevolen)
     rSpRamp       : Max setpointwijziging [bar/s] — 0.0 = ramp uitgeschakeld
-    rUitMin       : Minimale pompuitgang [%]
+    rUitMin       : Minimale pompuitgang als pomp loopt [%]
     rUitMax       : Maximale pompuitgang [%]
+    rHysterese    : Hysterese boven rUitMin voor inschakelen [%] (aanbevolen: 3-10%)
     rCyclustijd   : PLC taskperiode [s]  (bv. 0.01 voor 10ms task)
-    bReset        : Stijgende flank: bumpless reset naar rUitMin
+    bReset        : Stijgende flank: bumpless reset naar 0
 *)
 FUNCTION_BLOCK FB_PompDrukPID
 VAR_INPUT
@@ -47,28 +55,29 @@ VAR_INPUT
     rTi           : REAL := 2.0;          // Integratietijd [s]  (0 = I uit)
     rTd           : REAL := 0.0;          // Differentiatietijd [s] (0 = D uit, aanbevolen)
     rSpRamp       : REAL := 0.0;          // Max setpointwijziging [bar/s] (0 = uit)
-    rUitMin       : REAL := 0.0;          // Minimum pompuitgang [%]
+    rUitMin       : REAL := 0.0;          // Minimum pompuitgang als pomp loopt [%]
     rUitMax       : REAL := 100.0;        // Maximum pompuitgang [%]
+    rHysterese    : REAL := 5.0;          // Hysterese boven rUitMin voor inschakelen [%]
     rCyclustijd   : REAL := 0.01;         // Taskperiode [s]
-    bReset        : BOOL;                 // Bumpless reset naar rUitMin
+    bReset        : BOOL;                 // Bumpless reset naar 0
 END_VAR
 VAR_OUTPUT
-    rUitgang      : REAL;                 // Pompuitgang [%]
+    rUitgang        : REAL;               // Pompuitgang [%]  (0 of rUitMin..rUitMax)
+    bPompLoopt      : BOOL;               // TRUE = pomp draait
     rSetpointActief : REAL;               // Intern (gerampte) setpoint [bar]
-    rAfwijking    : REAL;                 // Regelafwijking: setpoint - meting [bar]
-    rPDeel        : REAL;                 // P-bijdrage [%]
-    rIDeel        : REAL;                 // I-bijdrage [%]
-    rDDeel        : REAL;                 // D-bijdrage [%]
-    bMinBegrensd  : BOOL;                 // Uitgang gesatureerd op minimum
-    bMaxBegrensd  : BOOL;                 // Uitgang gesatureerd op maximum
+    rAfwijking      : REAL;               // Regelafwijking: setpoint - meting [bar]
+    rPDeel          : REAL;               // P-bijdrage [%]
+    rIDeel          : REAL;               // I-bijdrage [%]
+    rDDeel          : REAL;               // D-bijdrage [%]
+    bMaxBegrensd    : BOOL;               // Uitgang begrensd op maximum
 END_VAR
 VAR
-    rIntegraal    : REAL;                 // Integraalsom
-    rMetingVorig  : REAL;                // Meting vorige cyclus (voor D op meting)
-    rUitOngeclipped : REAL;              // PID som voor begrenzing
-    bResetVorig   : BOOL;                // Flankdetectie reset
-    rSpIntern     : REAL;                // Gerampte setpoint intern
-    bEersteRun    : BOOL := TRUE;        // Initialisatie eerste scan
+    rIntegraal      : REAL;               // Integraalsom
+    rMetingVorig    : REAL;               // Meting vorige cyclus (voor D op meting)
+    rUitOngeclipped : REAL;               // PID som voor begrenzing
+    bResetVorig     : BOOL;               // Flankdetectie reset
+    rSpIntern       : REAL;               // Gerampte setpoint intern
+    bEersteRun      : BOOL := TRUE;       // Initialisatie eerste scan
 END_VAR
 ]]></Declaration>
     <Implementation>
@@ -83,6 +92,7 @@ END_IF
 // --- Veiligheidscontrole parameters ---
 IF rCyclustijd <= 0.0 THEN rCyclustijd := 0.01; END_IF
 IF rUitMax <= rUitMin  THEN rUitMax    := rUitMin + 1.0; END_IF
+IF rHysterese < 0.0    THEN rHysterese := 0.0; END_IF
 
 // --- Setpoint ramp (begrenst sprongen op setpoint) ---
 IF rSpRamp > 0.0 THEN
@@ -105,41 +115,41 @@ rPDeel     := rKp * rAfwijking;
 // --- Bumpless reset op stijgende flank ---
 IF bReset AND NOT bResetVorig THEN
     IF rTi > 0.0 AND rKp > 0.0 THEN
-        // Laad integraal zo dat P + I = 0.0 (uitgang wordt 0 na reset)
         rIntegraal := (0.0 - rPDeel) * rTi / rKp;
     ELSE
         rIntegraal := 0.0;
     END_IF
     rMetingVorig := rMeting;
+    bPompLoopt   := FALSE;
 END_IF
 bResetVorig := bReset;
 
 // --- PID inactief: uitgang = 0, integraal tracken voor bumpless inschakelen ---
 IF NOT bEnable THEN
-    rSpIntern       := rSetpoint;       // Geen ramp-achterstand bij inschakelen
+    rSpIntern       := rSetpoint;
     rSetpointActief := rSpIntern;
 
-    // Pre-laad integraal zodat bij inschakelen uitgang start op 0.0 (blip-vrij)
     IF rTi > 0.0 AND rKp > 0.0 THEN
         rIntegraal := (0.0 - rPDeel) * rTi / rKp;
     ELSE
         rIntegraal := 0.0;
     END_IF
     rMetingVorig := rMeting;
+    bPompLoopt   := FALSE;
 
-    rUitgang      := 0.0;
-    rIDeel        := 0.0;
-    rDDeel        := 0.0;
-    bMinBegrensd  := FALSE;
-    bMaxBegrensd  := FALSE;
+    rUitgang     := 0.0;
+    rIDeel       := 0.0;
+    rDDeel       := 0.0;
+    bMaxBegrensd := FALSE;
     RETURN;
 END_IF
 
 // --- I-deel met anti-windup ---
+// bPompLoopt=FALSE betekent uitgang=0 (pomp uit of in hysteresezone)
+// Stop negatief integreren als pomp uit is, stop positief als max bereikt
 IF rTi > 0.0 THEN
-    // Anti-windup: stop integreren bij saturatie in zelfde richting
-    IF NOT (bMaxBegrensd AND rAfwijking > 0.0)
-    AND NOT (bMinBegrensd AND rAfwijking < 0.0) THEN
+    IF NOT (bMaxBegrensd   AND rAfwijking > 0.0)
+    AND NOT (NOT bPompLoopt AND rAfwijking < 0.0) THEN
         rIntegraal := rIntegraal + rAfwijking * rCyclustijd;
     END_IF
     rIDeel := (rKp / rTi) * rIntegraal;
@@ -149,7 +159,6 @@ ELSE
 END_IF
 
 // --- D-deel op meting (vermijdt D-kick bij setpointwijziging) ---
-// Derivaat op -meting i.p.v. fout: setpointsprong geeft geen D-piek
 IF rTd > 0.0 THEN
     rDDeel := -rKp * rTd * (rMeting - rMetingVorig) / rCyclustijd;
 ELSE
@@ -160,18 +169,35 @@ rMetingVorig := rMeting;
 // --- PID som ---
 rUitOngeclipped := rPDeel + rIDeel + rDDeel;
 
-// --- Uitgang begrenzen ---
-// Onder minimum: pomp volledig uit (0.0), niet vastgehouden op minimum
-// Boven maximum: begrensd op maximum
-bMinBegrensd := rUitOngeclipped < rUitMin;
+// --- Uitgang met hysterese op inschakelpunt ---
+//
+//   Pomp UIT  -> AAN : uitgang moet >= rUitMin + rHysterese bereiken
+//   Pomp AAN  -> UIT : uitgang daalt onder rUitMin
+//
+//   Zo wordt klapperen/pulsen tijdens overshoot-terugkeer voorkomen:
+//   de pomp start pas opnieuw als de PID duidelijk boven de drempel zit.
+//
 bMaxBegrensd := rUitOngeclipped > rUitMax;
 
-IF bMinBegrensd THEN
-    rUitgang := 0.0;
+IF rUitOngeclipped < rUitMin THEN
+    // Uitgang onder minimum: pomp volledig uit
+    rUitgang   := 0.0;
+    bPompLoopt := FALSE;
+
+ELSIF NOT bPompLoopt AND rUitOngeclipped < rUitMin + rHysterese THEN
+    // Pomp was uit en uitgang zit in de hysteresezone: nog niet inschakelen
+    rUitgang   := 0.0;
+    bPompLoopt := FALSE;
+
 ELSIF bMaxBegrensd THEN
-    rUitgang := rUitMax;
+    // Uitgang boven maximum: begrensd
+    rUitgang   := rUitMax;
+    bPompLoopt := TRUE;
+
 ELSE
-    rUitgang := rUitOngeclipped;
+    // Normaal bedrijf: rUitMin <= uitgang <= rUitMax
+    rUitgang   := rUitOngeclipped;
+    bPompLoopt := TRUE;
 END_IF
 ]]></ST>
     </Implementation>

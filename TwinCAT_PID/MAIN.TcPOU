@@ -40,6 +40,9 @@ VAR
     // --- Uitgang begrenzing ---
     rPompMin        : REAL := 20.0;  // Minimum loopsnelheid pomp [%]  (bij PID < min => 0%)
     rPompMax        : REAL := 100.0; // Maximum pompuitgang [%]
+    rHysterese      : REAL := 5.0;   // Hysterese boven rPompMin voor inschakelen [%]
+                                     // Pomp AAN pas bij PID >= rPompMin + rHysterese (= 25%)
+                                     // Voorkomt pulseren bij overshoot terugkeer
 
     // --- Bediening ---
     bPIDActief      : BOOL := FALSE; // PID starten/stoppen
@@ -71,6 +74,7 @@ fbPompPID(
     rSpRamp      := rSpRamp,
     rUitMin      := rPompMin,
     rUitMax      := rPompMax,
+    rHysterese   := rHysterese,
     rCyclustijd  := 0.01,            // Pas aan op uw task-periode (hier 10ms)
     bReset       := bReset
 );
