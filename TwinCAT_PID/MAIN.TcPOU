@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.0">
+  <POU Name="MAIN" Id="{b2c3d4e5-f6a7-8901-bcde-f12345678901}" SpecialFunc="None">
+    <Declaration><![CDATA[
+(*
+  MAIN — Voorbeeld pompdrukregeling met FB_PompDrukPID
+  =====================================================
+
+  Aansluitschema:
+    - Druksensor  : analoge ingang  (bv. 4-20mA of 0-10V -> geschaald naar bar)
+    - Pompuitgang : analoge uitgang (0-100% -> bv. 0-10V naar frequentieregelaar)
+
+  Afstellen (aanbevolen volgorde):
+    1. Start met Kp = 1.0, Ti = 0 (I uit), Td = 0
+    2. Verhoog Kp tot lichte oscillatie, halveer dan Kp
+    3. Voeg integratietijd Ti toe (begin bij 5-10s, verlaag tot gewenste nauwkeurigheid)
+    4. D is voor pompdruk normaal NIET nodig — laat Td = 0.0
+*)
+PROGRAM MAIN
+VAR
+    fbPompPID       : FB_PompDrukPID;
+
+    // --- Proceswaarden ---
+    rDrukSetpoint   : REAL := 3.0;   // Gewenste druk [bar]  — via HMI aanpasbaar
+    rDrukMeting     : REAL;          // Gemeten druk [bar]   — van sensor
+
+    // --- PID parameters (via HMI of variabelenlijst instelbaar) ---
+    rKp             : REAL := 5.0;   // Proportionele versterking
+    rTi             : REAL := 2.0;   // Integratietijd [s]  (0 = I uit)
+    rTd             : REAL := 0.0;   // Differentiatietijd [s] (0 = D uit — aanbevolen)
+
+    // --- Uitgang begrenzing ---
+    rPompMin        : REAL := 10.0;  // Minimum pompuitgang [%]  (0 = volledig uitzetten)
+    rPompMax        : REAL := 100.0; // Maximum pompuitgang [%]
+
+    // --- Bediening ---
+    bPIDActief      : BOOL := FALSE; // PID starten/stoppen
+    bReset          : BOOL;          // Integraal resetten
+
+    // --- Uitgang naar aandrijving ---
+    rPompUitgang    : REAL;          // 0.0 .. 100.0 [%]
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[
+// ---------------------------------------------------------------
+// Druksensor inlezen — pas schalingsfactor aan op uw sensor
+// Voorbeeld: 0-10V analoge ingang = 0-10 bar
+//   rDrukMeting := GVL.rAI_DrukSensor * 10.0;
+//
+// Voorbeeld: 4-20mA = 0-16 bar (via 0-10V ingang via 500Ω shunt):
+//   rDrukMeting := (GVL.rAI_DrukSensor - 2.0) / 8.0 * 16.0;
+// ---------------------------------------------------------------
+
+// PID aanroepen
+fbPompPID(
+    bEnable      := bPIDActief,
+    rSetpoint    := rDrukSetpoint,
+    rMeting      := rDrukMeting,
+    rKp          := rKp,
+    rTi          := rTi,
+    rTd          := rTd,
+    rUitMin      := rPompMin,
+    rUitMax      := rPompMax,
+    rCyclustijd  := 0.01,            // Pas aan op uw task-periode (hier 10ms)
+    bReset       := bReset
+);
+
+// Uitgang overnemen
+rPompUitgang := fbPompPID.rUitgang;
+
+// ---------------------------------------------------------------
+// Uitgang naar frequentieregelaar / pomp sturen
+// Voorbeeld: 0-100% -> 0-10V analoge uitgang
+//   GVL.rAO_PompSnelheid := rPompUitgang / 100.0 * 10.0;
+// ---------------------------------------------------------------
+]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>
