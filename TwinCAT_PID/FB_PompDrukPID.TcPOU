@@ -160,7 +160,13 @@ rPDeel := rKp * rAfwijkingActief;
 // --- Bumpless reset op stijgende flank ---
 IF bReset AND NOT bResetVorig THEN
     IF rTi > 0.0 AND rKp > 0.0 THEN
-        rIntegraal := (0.0 - rPDeel) * rTi / rKp;
+        // Druk onder setpoint: direct voorladen voor snelle start
+        // Druk op/boven setpoint: voorladen voor 0 (geen directe start)
+        IF rAfwijkingActief > 0.0 THEN
+            rIntegraal := (rUitMin + rHysterese - rPDeel) * rTi / rKp;
+        ELSE
+            rIntegraal := (0.0 - rPDeel) * rTi / rKp;
+        END_IF
     ELSE
         rIntegraal := 0.0;
     END_IF
@@ -179,7 +185,11 @@ IF NOT bEnable THEN
     rSetpointActief   := rSpIntern;
 
     IF rTi > 0.0 AND rKp > 0.0 THEN
-        rIntegraal := (0.0 - rPDeel) * rTi / rKp;
+        IF rAfwijkingActief > 0.0 THEN
+            rIntegraal := (rUitMin + rHysterese - rPDeel) * rTi / rKp;
+        ELSE
+            rIntegraal := (0.0 - rPDeel) * rTi / rKp;
+        END_IF
     ELSE
         rIntegraal := 0.0;
     END_IF
@@ -214,6 +224,14 @@ IF rTi > 0.0 THEN
 ELSE
     rIntegraal := 0.0;
     rIDeel     := 0.0;
+END_IF
+
+// Pomp uit maar druk onder setpoint: integraal direct voorladen voor snelle start.
+// Voorkomt 100-500s wachttijd bij kleine afwijking buiten doodband.
+IF NOT bPompLoopt AND NOT bWachtOpDrukval AND rAfwijkingActief > 0.0
+   AND rTi > 0.0 AND rKp > 0.0 THEN
+    rIntegraal := MAX(rIntegraal, (rUitMin + rHysterese - rPDeel) * rTi / rKp);
+    rIDeel     := (rKp / rTi) * rIntegraal;
 END_IF
 
 // --- D-deel op meting (geen D-kick bij setpointwijziging) ---
