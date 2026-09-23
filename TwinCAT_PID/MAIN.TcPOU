@@ -43,6 +43,8 @@ VAR
     rHysterese      : REAL := 5.0;   // Hysterese boven rPompMin voor inschakelen [%]
     rDoodband       : REAL := 0.2;   // Doodband rondom setpoint [bar] (0 = uit)
                                      // Geen P/I actie binnen ±0.2 bar van setpoint
+    rMinAanTijd     : REAL := 5.0;   // Minimale aanlooptijd na elke start [s]
+                                     // Pomp blijft min 5s aan na start (voorkomt direct uitschakelen)
     rMinLooptijd    : REAL := 30.0;  // Max tijd op minimum draaien [s] (0 = uit)
                                      // Na 30s op min => pomp uit, herstart bij druk < SP-doodband
 
@@ -78,6 +80,7 @@ fbPompPID(
     rUitMin        := rPompMin,
     rUitMax        := rPompMax,
     rHysterese     := rHysterese,
+    rMinAanTijd    := rMinAanTijd,
     rMinLooptijd   := rMinLooptijd,
     rCyclustijd    := 0.01,          // Pas aan op uw task-periode (hier 10ms)
     bReset         := bReset
