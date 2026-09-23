@@ -19,65 +19,85 @@
 
   Setpoint ramp:
     rSpRamp [bar/s] begrenst hoe snel het interne setpoint mag wijzigen.
-    Voorkomt P-piek bij grote setpointsprongen. 0.0 = ramp uitgeschakeld.
+    Voorkomt P-piek bij grote setpointsprongen. 0.0 = uitgeschakeld.
+
+  Doodband:
+    Binnen ±rDoodband [bar] van het setpoint wordt de gecorrigeerde fout 0.
+    Geen P/I actie in de doodband: pomp blijft op huidige uitgang.
+    Soft doodband: buiten de zone wordt de doodband afgetrokken van de fout
+    zodat de overgang vloeiend is (geen sprong bij de grens).
+    0.0 = uitgeschakeld.
 
   Hysterese op aan/uit schakeldrempel (anti-puls):
     Pomp gaat UIT als PID-uitgang < rUitMin.
     Pomp gaat AAN pas als PID-uitgang >= rUitMin + rHysterese.
     Voorkomt pulsen/klapperen bij overshoot terugkeer naar setpoint.
-    Anti-windup respecteert de hysterese: integraal stopt ook tijdens
-    de hysteresezone zodat de drempel niet herhaaldelijk geraakt wordt.
+    Anti-windup respecteert de hysterese.
+
+  Minimum looptijd:
+    Als de pomp langer dan rMinLooptijd [s] op minimum draait, wordt ze
+    geforceerd uitgeschakeld (bWachtOpDrukval = TRUE).
+    Herstart pas als de druk daalt onder setpoint - rDoodband.
+    0.0 = uitgeschakeld.
 
   Anti-windup:
     Integraal stopt met opladen wanneer de pomp gesatureerd is
     (uitgang = 0 of uitgang = rUitMax) in dezelfde richting als de afwijking.
 
   Parameters:
-    bEnable       : PID actief. Bij FALSE: uitgang = 0, bumpless tracking.
-    rSetpoint     : Gewenste druk [bar]
-    rMeting       : Gemeten druk van sensor [bar]
-    rKp           : Proportionele versterking [-]
-    rTi           : Integratietijd [s]  — 0.0 = integraal uitgeschakeld
-    rTd           : Differentiatietijd [s] — 0.0 = differentiaal uitgeschakeld (aanbevolen)
-    rSpRamp       : Max setpointwijziging [bar/s] — 0.0 = ramp uitgeschakeld
-    rUitMin       : Minimale pompuitgang als pomp loopt [%]
-    rUitMax       : Maximale pompuitgang [%]
-    rHysterese    : Hysterese boven rUitMin voor inschakelen [%] (aanbevolen: 3-10%)
-    rCyclustijd   : PLC taskperiode [s]  (bv. 0.01 voor 10ms task)
-    bReset        : Stijgende flank: bumpless reset naar 0
+    bEnable        : PID actief. Bij FALSE: uitgang = 0, bumpless tracking.
+    rSetpoint      : Gewenste druk [bar]
+    rMeting        : Gemeten druk van sensor [bar]
+    rKp            : Proportionele versterking [-]
+    rTi            : Integratietijd [s]  — 0.0 = integraal uitgeschakeld
+    rTd            : Differentiatietijd [s] — 0.0 = uitgeschakeld (aanbevolen)
+    rSpRamp        : Max setpointwijziging [bar/s] — 0.0 = uitgeschakeld
+    rDoodband      : Doodband rondom setpoint [bar] — 0.0 = uitgeschakeld
+    rUitMin        : Minimale pompuitgang als pomp loopt [%]
+    rUitMax        : Maximale pompuitgang [%]
+    rHysterese     : Hysterese boven rUitMin voor inschakelen [%]
+    rMinLooptijd   : Max tijd op minimum voor geforceerde uitschakel [s] — 0.0 = uitgeschakeld
+    rCyclustijd    : PLC taskperiode [s]
+    bReset         : Stijgende flank: bumpless reset naar 0
 *)
 FUNCTION_BLOCK FB_PompDrukPID
 VAR_INPUT
-    bEnable       : BOOL;                 // PID inschakelen
-    rSetpoint     : REAL;                 // Gewenste druk [bar]
-    rMeting       : REAL;                 // Gemeten druk [bar]
-    rKp           : REAL := 5.0;          // Proportionele versterking [-]
-    rTi           : REAL := 2.0;          // Integratietijd [s]  (0 = I uit)
-    rTd           : REAL := 0.0;          // Differentiatietijd [s] (0 = D uit, aanbevolen)
-    rSpRamp       : REAL := 0.0;          // Max setpointwijziging [bar/s] (0 = uit)
-    rUitMin       : REAL := 0.0;          // Minimum pompuitgang als pomp loopt [%]
-    rUitMax       : REAL := 100.0;        // Maximum pompuitgang [%]
-    rHysterese    : REAL := 5.0;          // Hysterese boven rUitMin voor inschakelen [%]
-    rCyclustijd   : REAL := 0.01;         // Taskperiode [s]
-    bReset        : BOOL;                 // Bumpless reset naar 0
+    bEnable        : BOOL;                // PID inschakelen
+    rSetpoint      : REAL;                // Gewenste druk [bar]
+    rMeting        : REAL;                // Gemeten druk [bar]
+    rKp            : REAL := 5.0;         // Proportionele versterking [-]
+    rTi            : REAL := 2.0;         // Integratietijd [s]  (0 = I uit)
+    rTd            : REAL := 0.0;         // Differentiatietijd [s] (0 = D uit, aanbevolen)
+    rSpRamp        : REAL := 0.0;         // Max setpointwijziging [bar/s] (0 = uit)
+    rDoodband      : REAL := 0.0;         // Doodband rondom setpoint [bar] (0 = uit)
+    rUitMin        : REAL := 0.0;         // Minimum pompuitgang als pomp loopt [%]
+    rUitMax        : REAL := 100.0;       // Maximum pompuitgang [%]
+    rHysterese     : REAL := 5.0;         // Hysterese boven rUitMin voor inschakelen [%]
+    rMinLooptijd   : REAL := 0.0;         // Max tijd op minimum [s] (0 = uit)
+    rCyclustijd    : REAL := 0.01;        // Taskperiode [s]
+    bReset         : BOOL;                // Bumpless reset naar 0
 END_VAR
 VAR_OUTPUT
-    rUitgang        : REAL;               // Pompuitgang [%]  (0 of rUitMin..rUitMax)
-    bPompLoopt      : BOOL;               // TRUE = pomp draait
-    rSetpointActief : REAL;               // Intern (gerampte) setpoint [bar]
-    rAfwijking      : REAL;               // Regelafwijking: setpoint - meting [bar]
-    rPDeel          : REAL;               // P-bijdrage [%]
-    rIDeel          : REAL;               // I-bijdrage [%]
-    rDDeel          : REAL;               // D-bijdrage [%]
-    bMaxBegrensd    : BOOL;               // Uitgang begrensd op maximum
+    rUitgang         : REAL;              // Pompuitgang [%]  (0 of rUitMin..rUitMax)
+    bPompLoopt       : BOOL;              // TRUE = pomp draait
+    bOpMinimum       : BOOL;              // TRUE = pomp draait op minimum
+    bWachtOpDrukval  : BOOL;              // TRUE = geforceerd uit, wacht op drukdaling
+    rTellerMin       : REAL;              // Timer: tijd op minimum [s]
+    rSetpointActief  : REAL;              // Intern (gerampte) setpoint [bar]
+    rAfwijking       : REAL;              // Regelafwijking: setpoint - meting [bar]
+    rAfwijkingActief : REAL;              // Afwijking na doodband [bar]
+    rPDeel           : REAL;              // P-bijdrage [%]
+    rIDeel           : REAL;              // I-bijdrage [%]
+    rDDeel           : REAL;              // D-bijdrage [%]
+    bMaxBegrensd     : BOOL;              // Uitgang begrensd op maximum
 END_VAR
 VAR
-    rIntegraal      : REAL;               // Integraalsom
-    rMetingVorig    : REAL;               // Meting vorige cyclus (voor D op meting)
-    rUitOngeclipped : REAL;               // PID som voor begrenzing
-    bResetVorig     : BOOL;               // Flankdetectie reset
-    rSpIntern       : REAL;               // Gerampte setpoint intern
-    bEersteRun      : BOOL := TRUE;       // Initialisatie eerste scan
+    rIntegraal       : REAL;              // Integraalsom
+    rMetingVorig     : REAL;              // Meting vorige cyclus (voor D op meting)
+    rUitOngeclipped  : REAL;              // PID som voor begrenzing
+    bResetVorig      : BOOL;              // Flankdetectie reset
+    rSpIntern        : REAL;              // Gerampte setpoint intern
+    bEersteRun       : BOOL := TRUE;      // Initialisatie eerste scan
 END_VAR
 ]]></Declaration>
     <Implementation>
@@ -90,9 +110,11 @@ IF bEersteRun THEN
 END_IF
 
 // --- Veiligheidscontrole parameters ---
-IF rCyclustijd <= 0.0 THEN rCyclustijd := 0.01; END_IF
-IF rUitMax <= rUitMin  THEN rUitMax    := rUitMin + 1.0; END_IF
-IF rHysterese < 0.0    THEN rHysterese := 0.0; END_IF
+IF rCyclustijd <= 0.0  THEN rCyclustijd  := 0.01; END_IF
+IF rUitMax <= rUitMin  THEN rUitMax      := rUitMin + 1.0; END_IF
+IF rHysterese < 0.0    THEN rHysterese   := 0.0; END_IF
+IF rDoodband < 0.0     THEN rDoodband    := 0.0; END_IF
+IF rMinLooptijd < 0.0  THEN rMinLooptijd := 0.0; END_IF
 
 // --- Setpoint ramp (begrenst sprongen op setpoint) ---
 IF rSpRamp > 0.0 THEN
@@ -108,9 +130,24 @@ ELSE
 END_IF
 rSetpointActief := rSpIntern;
 
-// --- Regelafwijking (ook berekend als PID uit, voor bumpless tracking) ---
+// --- Regelafwijking ---
 rAfwijking := rSpIntern - rMeting;
-rPDeel     := rKp * rAfwijking;
+
+// --- Doodband (soft): binnen ±rDoodband fout = 0, buiten wordt doodband afgetrokken ---
+IF rDoodband > 0.0 THEN
+    IF ABS(rAfwijking) < rDoodband THEN
+        rAfwijkingActief := 0.0;
+    ELSIF rAfwijking > 0.0 THEN
+        rAfwijkingActief := rAfwijking - rDoodband;
+    ELSE
+        rAfwijkingActief := rAfwijking + rDoodband;
+    END_IF
+ELSE
+    rAfwijkingActief := rAfwijking;
+END_IF
+
+// P-term alvast berekenen voor bumpless preload
+rPDeel := rKp * rAfwijkingActief;
 
 // --- Bumpless reset op stijgende flank ---
 IF bReset AND NOT bResetVorig THEN
@@ -119,38 +156,44 @@ IF bReset AND NOT bResetVorig THEN
     ELSE
         rIntegraal := 0.0;
     END_IF
-    rMetingVorig := rMeting;
-    bPompLoopt   := FALSE;
+    rMetingVorig    := rMeting;
+    bPompLoopt      := FALSE;
+    bWachtOpDrukval := FALSE;
+    rTellerMin      := 0.0;
 END_IF
 bResetVorig := bReset;
 
 // --- PID inactief: uitgang = 0, integraal tracken voor bumpless inschakelen ---
 IF NOT bEnable THEN
-    rSpIntern       := rSetpoint;
-    rSetpointActief := rSpIntern;
+    rSpIntern        := rSetpoint;
+    rSetpointActief  := rSpIntern;
 
     IF rTi > 0.0 AND rKp > 0.0 THEN
         rIntegraal := (0.0 - rPDeel) * rTi / rKp;
     ELSE
         rIntegraal := 0.0;
     END_IF
-    rMetingVorig := rMeting;
-    bPompLoopt   := FALSE;
+    rMetingVorig     := rMeting;
+    bPompLoopt       := FALSE;
+    bWachtOpDrukval  := FALSE;
+    rTellerMin       := 0.0;
 
-    rUitgang     := 0.0;
-    rIDeel       := 0.0;
-    rDDeel       := 0.0;
-    bMaxBegrensd := FALSE;
+    rUitgang         := 0.0;
+    bOpMinimum       := FALSE;
+    rIDeel           := 0.0;
+    rDDeel           := 0.0;
+    bMaxBegrensd     := FALSE;
     RETURN;
 END_IF
 
 // --- I-deel met anti-windup ---
-// bPompLoopt=FALSE betekent uitgang=0 (pomp uit of in hysteresezone)
-// Stop negatief integreren als pomp uit is, stop positief als max bereikt
+// Stop negatief integreren als pomp uit is (incl. hysteresezone en wachttoestand)
+// Stop positief integreren als maximum bereikt is
 IF rTi > 0.0 THEN
-    IF NOT (bMaxBegrensd   AND rAfwijking > 0.0)
-    AND NOT (NOT bPompLoopt AND rAfwijking < 0.0) THEN
-        rIntegraal := rIntegraal + rAfwijking * rCyclustijd;
+    IF NOT (bMaxBegrensd              AND rAfwijkingActief > 0.0)
+    AND NOT (NOT bPompLoopt           AND rAfwijkingActief < 0.0)
+    AND NOT (bWachtOpDrukval          AND rAfwijkingActief < 0.0) THEN
+        rIntegraal := rIntegraal + rAfwijkingActief * rCyclustijd;
     END_IF
     rIDeel := (rKp / rTi) * rIntegraal;
 ELSE
@@ -168,36 +211,65 @@ rMetingVorig := rMeting;
 
 // --- PID som ---
 rUitOngeclipped := rPDeel + rIDeel + rDDeel;
+bMaxBegrensd    := rUitOngeclipped > rUitMax;
 
 // --- Uitgang met hysterese op inschakelpunt ---
 //
-//   Pomp UIT  -> AAN : uitgang moet >= rUitMin + rHysterese bereiken
-//   Pomp AAN  -> UIT : uitgang daalt onder rUitMin
+//   UIT -> AAN : PID-uitgang moet >= rUitMin + rHysterese bereiken
+//   AAN -> UIT : PID-uitgang daalt onder rUitMin
 //
-//   Zo wordt klapperen/pulsen tijdens overshoot-terugkeer voorkomen:
-//   de pomp start pas opnieuw als de PID duidelijk boven de drempel zit.
-//
-bMaxBegrensd := rUitOngeclipped > rUitMax;
-
 IF rUitOngeclipped < rUitMin THEN
-    // Uitgang onder minimum: pomp volledig uit
     rUitgang   := 0.0;
     bPompLoopt := FALSE;
-
 ELSIF NOT bPompLoopt AND rUitOngeclipped < rUitMin + rHysterese THEN
-    // Pomp was uit en uitgang zit in de hysteresezone: nog niet inschakelen
+    // Hysteresezone: pomp was uit, nog niet inschakelen
     rUitgang   := 0.0;
     bPompLoopt := FALSE;
-
 ELSIF bMaxBegrensd THEN
-    // Uitgang boven maximum: begrensd
     rUitgang   := rUitMax;
     bPompLoopt := TRUE;
-
 ELSE
-    // Normaal bedrijf: rUitMin <= uitgang <= rUitMax
     rUitgang   := rUitOngeclipped;
     bPompLoopt := TRUE;
+END_IF
+
+// --- Minimum looptijd: geforceerde uitschakel na te lang op minimum draaien ---
+//
+//   bOpMinimum = pomp loopt én PID-uitgang is in de hysteresezone (nauwelijks boven min)
+//   Zodra de timer vol is: geforceerd uit, wacht op drukdaling.
+//   Herstart: druk daalt onder setpoint - doodband (onderkant doodband).
+//
+bOpMinimum := bPompLoopt AND (rUitOngeclipped < rUitMin + rHysterese);
+
+IF rMinLooptijd > 0.0 THEN
+    // Herstart na drukdaling onder onderkant doodband
+    IF bWachtOpDrukval THEN
+        IF rMeting < rSpIntern - rDoodband THEN
+            bWachtOpDrukval := FALSE;
+            rTellerMin      := 0.0;
+        ELSE
+            // Geforceerd uitgeschakeld: overschrijf uitgang
+            rUitgang   := 0.0;
+            bPompLoopt := FALSE;
+            bOpMinimum := FALSE;
+            // Integraal bijhouden voor bumpless herstart
+            IF rTi > 0.0 AND rKp > 0.0 THEN
+                rIntegraal := (0.0 - rPDeel) * rTi / rKp;
+            END_IF
+        END_IF
+
+    // Timer: tel tijd op minimum
+    ELSIF bOpMinimum THEN
+        rTellerMin := rTellerMin + rCyclustijd;
+        IF rTellerMin >= rMinLooptijd THEN
+            bWachtOpDrukval := TRUE;
+            rTellerMin      := 0.0;
+        END_IF
+
+    ELSE
+        // Pomp draait boven minimum of is uit: timer reset
+        rTellerMin := 0.0;
+    END_IF
 END_IF
 ]]></ST>
     </Implementation>

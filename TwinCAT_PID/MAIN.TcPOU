@@ -41,8 +41,10 @@ VAR
     rPompMin        : REAL := 20.0;  // Minimum loopsnelheid pomp [%]  (bij PID < min => 0%)
     rPompMax        : REAL := 100.0; // Maximum pompuitgang [%]
     rHysterese      : REAL := 5.0;   // Hysterese boven rPompMin voor inschakelen [%]
-                                     // Pomp AAN pas bij PID >= rPompMin + rHysterese (= 25%)
-                                     // Voorkomt pulseren bij overshoot terugkeer
+    rDoodband       : REAL := 0.2;   // Doodband rondom setpoint [bar] (0 = uit)
+                                     // Geen P/I actie binnen ±0.2 bar van setpoint
+    rMinLooptijd    : REAL := 30.0;  // Max tijd op minimum draaien [s] (0 = uit)
+                                     // Na 30s op min => pomp uit, herstart bij druk < SP-doodband
 
     // --- Bediening ---
     bPIDActief      : BOOL := FALSE; // PID starten/stoppen
@@ -65,18 +67,20 @@ END_VAR
 
 // PID aanroepen
 fbPompPID(
-    bEnable      := bPIDActief,
-    rSetpoint    := rDrukSetpoint,
-    rMeting      := rDrukMeting,
-    rKp          := rKp,
-    rTi          := rTi,
-    rTd          := rTd,
-    rSpRamp      := rSpRamp,
-    rUitMin      := rPompMin,
-    rUitMax      := rPompMax,
-    rHysterese   := rHysterese,
-    rCyclustijd  := 0.01,            // Pas aan op uw task-periode (hier 10ms)
-    bReset       := bReset
+    bEnable        := bPIDActief,
+    rSetpoint      := rDrukSetpoint,
+    rMeting        := rDrukMeting,
+    rKp            := rKp,
+    rTi            := rTi,
+    rTd            := rTd,
+    rSpRamp        := rSpRamp,
+    rDoodband      := rDoodband,
+    rUitMin        := rPompMin,
+    rUitMax        := rPompMax,
+    rHysterese     := rHysterese,
+    rMinLooptijd   := rMinLooptijd,
+    rCyclustijd    := 0.01,          // Pas aan op uw task-periode (hier 10ms)
+    bReset         := bReset
 );
 
 // Uitgang overnemen
